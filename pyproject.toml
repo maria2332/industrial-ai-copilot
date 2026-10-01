@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "industrial-ai-copilot"
+version = "0.1.0"
+description = "Decision-support PoC combining RAG over technical documentation with predictive maintenance on sensor data."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "María Arribas Ballesteros" }]
+# Core dependencies stay empty: each phase adds an optional group below,
+# so nobody installs PyTorch or ChromaDB just to run the linters.
+dependencies = []
+
+[project.optional-dependencies]
+# Phase 1 - dataset + machine learning
+ml = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "xgboost>=2.1",
+    "shap>=0.46",
+    "joblib>=1.4",
+    "matplotlib>=3.9",
+]
+# Groups "rag", "agent", "api" and "ui" are added in their phases,
+# after checking the current API of each library.
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "pre-commit>=3.8",
+    "ipykernel>=6.29",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: import order, B: bugbear,
+# UP: modern syntax, SIM: simplifications
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --import-mode=importlib"
+
+[tool.coverage.run]
+source = ["industrial_ai"]
