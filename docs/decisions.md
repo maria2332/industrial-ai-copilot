@@ -34,6 +34,7 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 - **Decision:** grouped cross-validation by unit for model selection and the official test set for the final evaluation. Rolling features are computed per unit using past cycles only, and all preprocessing is fitted inside a scikit-learn `Pipeline` on training data only.
 - **Reason:** each C-MAPSS unit is an independent trajectory starting at cycle 1, so there is no shared calendar to cut on. Splitting by unit simulates the real question: *how does the model behave on an engine it has never seen?*
 - **Trade-offs:** fewer units per fold and higher variance across folds, so metrics are reported as mean ± standard deviation.
+- **Evidence (Phase 1):** with raw sensors, a random row split was not more optimistic than a split by unit (PR-AUC 0.956 vs 0.961). The split by unit is kept because it reproduces deployment; the experiment is repeated with rolling features (notebook 02).
 
 ## D-004 · RAG instead of fine-tuning
 
@@ -148,3 +149,23 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 **Status:** Pending — decided in Phase 1
 
 Chosen after comparing logistic regression, random forest, gradient boosting and XGBoost with grouped cross-validation, primarily on PR-AUC and on precision at the recall required by the operating threshold, not on accuracy.
+
+## D-016 · Sensor selection: explicit list from the EDA
+
+**Status:** Accepted (Phase 1)
+
+- **Problem:** several FD001 columns carry no information.
+- **Options:** keep everything; a fitted variance threshold; an explicit list justified by the EDA.
+- **Decision:** explicit list of 14 sensors (`SELECTED_SENSORS`).
+- **Reason:** six sensors and `setting_3` are constant, sensor 6 only takes two values, and the operational settings are noise in a single regime. An explicit list is transparent and reviewable; a variance threshold would keep sensor 6 unless tuned for it.
+- **Trade-offs:** the list is specific to FD001 and must be revisited for other subsets.
+
+## D-017 · Features as a stateless transformer inside the model Pipeline
+
+**Status:** Accepted (Phase 1)
+
+- **Problem:** features must be computed identically in training and in the API (no training/serving skew), without leaking information.
+- **Options:** compute features in a notebook and train on the result; a separate feature script; a scikit-learn transformer inside the Pipeline.
+- **Decision:** `UnitHistoryFeatures` transformer wrapping `build_features`, placed first in the saved Pipeline.
+- **Reason:** the saved artifact goes from raw sensor history to prediction, so the API cannot compute features differently. Features are stateless and past-only, so they behave the same inside or outside cross-validation folds.
+- **Trade-offs:** the Pipeline expects each unit's complete history as input, not a single row; the API must pass the history of the unit.
