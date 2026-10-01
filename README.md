@@ -1,6 +1,6 @@
 # Industrial AI Copilot
 
-![CI](https://github.com/<your-github-user>/industrial-ai-copilot/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/maria2332/industrial-ai-copilot/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -125,7 +125,7 @@ The raw data is not redistributed in this repository; it is downloaded by a scri
 Development setup (current phase):
 
 ```bash
-git clone https://github.com/<your-github-user>/industrial-ai-copilot.git
+git clone https://github.com/maria2332/industrial-ai-copilot.git
 cd industrial-ai-copilot
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -199,4 +199,4 @@ Computer vision for inspection, OCR, multimodal RAG, digital twins, real-time st
 
 **María Arribas Ballesteros** — Mathematical Engineering graduate (Artificial Intelligence specialisation), CEU San Pablo University.
 
-[LinkedIn](<add-your-link>) · [GitHub](https://github.com/<your-github-user>)
+[LinkedIn](<https://www.linkedin.com/in/mar%C3%ADa-arribas-ballesteros>) · [GitHub](https://github.com/maria2332)
