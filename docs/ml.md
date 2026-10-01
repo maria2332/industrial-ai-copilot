@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done. Sections 5–10 are written in blocks 1.3–1.5.
+> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Sections 5–10 are written in blocks 1.3–1.5.
 
 ## 1. Dataset
 
@@ -55,7 +55,7 @@ Risks identified before modelling:
 - **Model selection on the test set.** The official test set is used once, for the final evaluation.
 - **The `cycle` feature.** The age of a unit is known at prediction time, so it is not leakage, but it can let the model learn the lifetime distribution of this fleet instead of its health state. It is evaluated with and without in block 1.2.
 
-**What the experiments showed.** With raw sensors (notebook 01), the random row split was not more optimistic than the split by unit (0.956 vs 0.961, single split). The most likely reason: each raw reading carries independent noise, and the degradation signature is shared by the whole fleet (one fault mode), so the model learns a fleet-wide pattern rather than memorising individual units. The experiment is repeated with rolling features in notebook 02, where overlapping windows make neighbouring rows much more similar. Either way, the split by unit remains the protocol because it reproduces deployment: the model is always evaluated on engines it has never seen.
+**What the experiments showed.** With raw sensors (notebook 01), the random row split was not more optimistic than the split by unit (0.956 vs 0.961, single split). The most likely reason: each raw reading carries independent noise, and the degradation signature is shared by the whole fleet (one fault mode), so the model learns a fleet-wide pattern rather than memorising individual units. With rolling features (notebook 02, 5-fold cross-validation, same diagnostic random forest) the gap appears, as anticipated: **0.994 ± 0.001 with random rows vs 0.973 ± 0.008 with whole units**. Overlapping windows make each validation row nearly identical to its neighbours in training. The random split hides most of the real errors (1 − PR-AUC of 0.006 vs 0.027, about 4.5 times smaller) and is suspiciously stable across folds. Grouped cross-validation by unit is therefore confirmed as the protocol; it also reproduces deployment, where the model always faces engines it has never seen. Folds are balanced without stratification (positive rate 0.15 in every fold) because every unit contributes exactly H + 1 positive cycles.
 
 Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-by-engine-unit-with-past-only-features) — grouped cross-validation by unit for model selection and the official test set for the final evaluation.
 
@@ -69,7 +69,7 @@ Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-b
 |---|---|---|
 | `mean10` | Rolling mean over the last 10 cycles | Noise dominates cycle-to-cycle variation; smoothing exposes the level |
 | `delta_baseline` | `mean10` minus the unit's mean over its first 20 cycles | Units start at different levels; the deviation from each unit's own healthy reference isolates degradation from manufacturing differences |
-| `trend10` | `mean10` now minus `mean10` ten cycles earlier (0 until available) | Degradation accelerates near failure, so the rate of change should grow |
+| `trend10` | `mean10` now minus `mean10` ten cycles earlier, once both windows are complete (0 before cycle 20) | Degradation accelerates near failure, so the rate of change should grow |
 
 **Window sizes.** A 10-cycle window is about 5% of the median lifetime and a third of the 30-cycle horizon: long enough to smooth noise, short enough to react within the horizon. Longer windows smooth more but delay detection, which is the central trade-off. The 20-cycle baseline fits within the shortest observed test history (31 cycles). All three values are configurable in `FeatureConfig`.
 
@@ -82,7 +82,15 @@ Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-b
 | Exponentially weighted mean | Redundant with the rolling mean, which is easier to explain |
 | Ratios between sensors | No physically justified combination we can defend; sensor 12 (phi) is already a ratio and tree models capture interactions |
 | Operational settings | Pure noise in FD001 (single regime) |
-| `cycle` (age) | Not leakage, but it may teach "old units fail" instead of health; decided with a pre-registered rule in notebook 02 (kept only if it improves grouped PR-AUC by more than one standard deviation) |
+| `cycle` (age) | Not leakage, but it may teach "old units fail" instead of health. Pre-registered rule: keep it only if it improves grouped PR-AUC by more than one standard deviation. Result: 0.981 ± 0.006 with vs 0.973 ± 0.008 without, a gain equal to one standard deviation, so it does not pass (see D-018) |
+
+**Results (notebook 02).**
+
+- `delta_baseline` has the strongest correlation with RUL for all 14 sensors (|ρ| up to 0.865 for sensor 11, vs 0.718 raw). The two steps add separate gains: smoothing (raw → rolling mean) adds up to +0.14, mostly for noisy or quantised sensors (3, 17, 2, 20, 21); removing each unit's offset (rolling mean → `delta_baseline`) adds a further +0.03 to +0.14, most for the fan speeds 13 and 8 and for sensors 11, 12 and 7.
+- Sensors 9 and 14 stay far below the rest (−0.37 and −0.21 after the baseline): removing an offset cannot fix trends that go in opposite directions across units.
+- `trend` is the weakest feature on its own (|ρ| 0.20–0.51): the rate of change is noisy and close to zero for most of a unit's life, so any value it has is concentrated near failure. Its contribution is checked with model attributions in block 1.5.
+- **Warm-up artefact found and fixed.** The plot of unit 1 showed a spike in `trend` around cycle 11: during the first cycles the rolling mean is computed over fewer than 10 values, so comparing against it is noisy. `trend` is now 0 until both windows are complete (cycle ≥ window + lag), with a dedicated test. The level (`mean10`) keeps a partial window during warm-up; this only affects cycles far from failure (the shortest lifetime is 128 cycles).
+- Raw sensors and engineered features have not yet been compared under the same protocol (notebook 01 used a single split and a different forest), so 0.961 vs 0.973 is not a fair comparison; block 1.3 includes a raw-sensor baseline under grouped cross-validation.
 
 **Input contract.** Features need each unit's complete history (contiguous cycles from 1) because the baseline comes from its first cycles. `build_features` rejects incomplete histories instead of computing misleading values. In production this corresponds to keeping the history since commissioning or the last overhaul.
 

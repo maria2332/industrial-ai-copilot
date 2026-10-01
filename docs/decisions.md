@@ -34,7 +34,7 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 - **Decision:** grouped cross-validation by unit for model selection and the official test set for the final evaluation. Rolling features are computed per unit using past cycles only, and all preprocessing is fitted inside a scikit-learn `Pipeline` on training data only.
 - **Reason:** each C-MAPSS unit is an independent trajectory starting at cycle 1, so there is no shared calendar to cut on. Splitting by unit simulates the real question: *how does the model behave on an engine it has never seen?*
 - **Trade-offs:** fewer units per fold and higher variance across folds, so metrics are reported as mean ± standard deviation.
-- **Evidence (Phase 1):** with raw sensors, a random row split was not more optimistic than a split by unit (PR-AUC 0.956 vs 0.961). The split by unit is kept because it reproduces deployment; the experiment is repeated with rolling features (notebook 02).
+- **Evidence (Phase 1):** with raw sensors, a random row split was not more optimistic than a split by unit (PR-AUC 0.956 vs 0.961, single split). With rolling features the leakage appears: 0.994 ± 0.001 with random rows vs 0.973 ± 0.008 with whole units (5-fold), so the random split hides most of the real errors.
 
 ## D-004 · RAG instead of fine-tuning
 
@@ -169,3 +169,14 @@ Chosen after comparing logistic regression, random forest, gradient boosting and
 - **Decision:** `UnitHistoryFeatures` transformer wrapping `build_features`, placed first in the saved Pipeline.
 - **Reason:** the saved artifact goes from raw sensor history to prediction, so the API cannot compute features differently. Features are stateless and past-only, so they behave the same inside or outside cross-validation folds.
 - **Trade-offs:** the Pipeline expects each unit's complete history as input, not a single row; the API must pass the history of the unit.
+
+## D-018 · Unit age (`cycle`) is not a feature
+
+**Status:** Accepted (Phase 1)
+
+- **Problem:** the age of a unit is known at prediction time and may improve scores, but it can also teach the model the lifetime distribution of this fleet instead of its health.
+- **Options:** include `cycle`; exclude it; decide with a rule fixed before seeing the result.
+- **Decision:** excluded, by applying the pre-registered rule (include only if grouped PR-AUC improves by more than one standard deviation across folds).
+- **Evidence:** 0.981 ± 0.006 with `cycle` vs 0.973 ± 0.008 without. The gain (+0.008) equals one standard deviation at the reported precision, so it does not exceed the threshold.
+- **Reason:** a borderline result defaults to the simpler model, and the generalisation risk remains: a unit with a longer or shorter life, or another fleet, would be judged by its age rather than its condition.
+- **Trade-offs:** a possible small gain on this benchmark is given up in exchange for a model that reads health signals only.
