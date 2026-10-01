@@ -69,6 +69,19 @@ def test_known_values_on_a_linear_ramp(make_trajectories):
     assert features.loc[1, "sensor_2_delta_baseline"] == 0.0
 
 
+def test_trend_is_zero_until_both_windows_are_complete(make_trajectories):
+    trajectories = make_trajectories({1: 30})
+    trajectories["sensor_2"] = trajectories["cycle"].astype(float)
+    config = FeatureConfig(sensors=("sensor_2",), window=10, trend_lag=10, baseline_cycles=20)
+
+    trend = build_features(trajectories, config)["sensor_2_trend10"].set_axis(trajectories["cycle"])
+
+    # before cycle 20 the older rolling mean covers fewer than 10 cycles: no trend yet
+    assert (trend.loc[:19] == 0.0).all()
+    # cycle 20: mean of 11..20 (15.5) minus mean of 1..10 (5.5)
+    assert trend.loc[20] == pytest.approx(10.0)
+
+
 def test_incomplete_history_is_rejected(make_trajectories):
     trajectories = make_trajectories({1: 10})
 

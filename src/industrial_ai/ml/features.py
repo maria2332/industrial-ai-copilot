@@ -65,7 +65,8 @@ def build_features(frame: pd.DataFrame, config: FeatureConfig | None = None) -> 
 
     For each selected sensor:
     - mean{window}: rolling mean over the last `window` cycles (noise reduction);
-    - trend{lag}: rolling mean now minus rolling mean `lag` cycles ago (0 until available);
+    - trend{lag}: rolling mean now minus rolling mean `lag` cycles ago, once both windows are
+      complete (0 while cycle < window + lag, when the older mean covers too few cycles);
     - delta_baseline: rolling mean minus the unit's mean over its first `baseline_cycles`
       cycles (expanding mean while those cycles are still being observed).
     """
@@ -82,7 +83,9 @@ def build_features(frame: pd.DataFrame, config: FeatureConfig | None = None) -> 
     rolling_mean = sensors.groupby(units).transform(
         lambda values: values.rolling(config.window, min_periods=1).mean()
     )
-    trend = (rolling_mean - rolling_mean.groupby(units).shift(config.trend_lag)).fillna(0.0)
+    trend = rolling_mean - rolling_mean.groupby(units).shift(config.trend_lag)
+    warming_up = ordered["cycle"] < config.window + config.trend_lag
+    trend.loc[warming_up, :] = 0.0
 
     early = sensors.copy()
     early.loc[ordered["cycle"] > config.baseline_cycles, :] = np.nan
