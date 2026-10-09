@@ -9,7 +9,7 @@
 > [!IMPORTANT]
 > All industrial documentation used in this project is synthetic and created exclusively for demonstration purposes. This is an independent, educational proof of concept: it is not affiliated with or built for any company, it uses no private or confidential data, and it must not be used for real operational decisions.
 
-**Status:** 🚧 Phase 0 — architecture and scaffolding. See the [roadmap](#roadmap).
+   **Status:** 🚧 Phase 1 — dataset and machine learning (in progress). See the [roadmap](#roadmap).
 
 ## Overview
 
@@ -182,8 +182,8 @@ Computer vision for inspection, OCR, multimodal RAG, digital twins, real-time st
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Architecture and scaffolding | 🚧 In progress |
-| 1 | Dataset + ML | ⏳ |
+| 0 | Architecture and scaffolding | ✅ Done |
+| 1 | Dataset + ML | 🚧 In progress |
 | 2 | Synthetic technical documents | ⏳ |
 | 3 | RAG | ⏳ |
 | 4 | Agent | ⏳ |
