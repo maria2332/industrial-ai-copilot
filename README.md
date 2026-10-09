@@ -164,6 +164,7 @@ The same checks run automatically on GitHub Actions for every push to `main` and
 - Models are **not validated for production** and the decision threshold reflects assumptions, not a real cost analysis.
 - The LLM can make mistakes; mitigations reduce but do not eliminate this risk.
 - RAG quality depends on the quality and coverage of the documentation.
+- The failure model uses the unit's age (`cycle`), which may partly reflect the lifetimes of this simulated fleet; units with very different lives could be misjudged.
 - Anomaly detection and feature attributions show **correlations, not causes**.
 - The system must not be used for real operational or safety decisions.
 

@@ -53,9 +53,9 @@ Risks identified before modelling:
 - **Preprocessing fitted on all data.** Scalers or imputers fitted before splitting leak statistics of the evaluation data; they are fitted inside a scikit-learn `Pipeline` on training data only.
 - **Features computed with future information.** Rolling statistics are computed per unit using past cycles only.
 - **Model selection on the test set.** The official test set is used once, for the final evaluation.
-- **The `cycle` feature.** The age of a unit is known at prediction time, so it is not leakage, but it can let the model learn the lifetime distribution of this fleet instead of its health state. It is evaluated with and without in block 1.2.
+- **The `cycle` feature.** The age of a unit is known at prediction time, so it is not leakage, but it can let the model learn the lifetime distribution of this fleet instead of its health state. It is evaluated with and without in block 1.2, and included because it passes the pre-registered rule (D-018).
 
-**What the experiments showed.** With raw sensors (notebook 01), the random row split was not more optimistic than the split by unit (0.956 vs 0.961, single split). The most likely reason: each raw reading carries independent noise, and the degradation signature is shared by the whole fleet (one fault mode), so the model learns a fleet-wide pattern rather than memorising individual units. With rolling features (notebook 02, 5-fold cross-validation, same diagnostic random forest) the gap appears, as anticipated: **0.994 ± 0.001 with random rows vs 0.973 ± 0.008 with whole units**. Overlapping windows make each validation row nearly identical to its neighbours in training. The random split hides most of the real errors (1 − PR-AUC of 0.006 vs 0.027, about 4.5 times smaller) and is suspiciously stable across folds. Grouped cross-validation by unit is therefore confirmed as the protocol; it also reproduces deployment, where the model always faces engines it has never seen. Folds are balanced without stratification (positive rate 0.15 in every fold) because every unit contributes exactly H + 1 positive cycles.
+**What the experiments showed.** With raw sensors (notebook 01), the random row split was not more optimistic than the split by unit (0.956 vs 0.961, single split). The most likely reason: each raw reading carries independent noise, and the degradation signature is shared by the whole fleet (one fault mode), so the model learns a fleet-wide pattern rather than memorising individual units. With rolling features (notebook 02, 5-fold cross-validation, same diagnostic random forest) the gap appears, as anticipated: **0.994 ± 0.002 with random rows vs 0.972 ± 0.008 with whole units**. Overlapping windows make each validation row nearly identical to its neighbours in training. The random split hides most of the real errors (1 − PR-AUC of 0.006 vs 0.028, between 4 and 5 times smaller) and is suspiciously stable across folds. Grouped cross-validation by unit is therefore confirmed as the protocol; it also reproduces deployment, where the model always faces engines it has never seen. Folds are balanced without stratification (positive rate 0.15 in every fold) because every unit contributes exactly H + 1 positive cycles.
 
 Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-by-engine-unit-with-past-only-features) — grouped cross-validation by unit for model selection and the official test set for the final evaluation.
 
@@ -63,13 +63,16 @@ Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-b
 
 **Principle.** Features are *stateless* and *past-only*: each row is computed from its own unit's current and previous cycles, never from other units or from statistics of the training set. That is why computing them before a grouped split cannot leak, and why the same function serves training and inference. Anything *stateful* (scaling, imputation) is fitted inside the model `Pipeline` on training folds only. The feature step itself is wrapped as a scikit-learn transformer (`UnitHistoryFeatures`), so the saved model goes from raw sensor history to prediction (see D-017).
 
-**Accepted features** (for each of the 14 selected sensors, 42 in total):
+**Accepted features** (for each of the 14 selected sensors, 42 in total, plus the unit's age: 43):
 
 | Feature | Definition | Why (evidence from the EDA) |
 |---|---|---|
 | `mean10` | Rolling mean over the last 10 cycles | Noise dominates cycle-to-cycle variation; smoothing exposes the level |
 | `delta_baseline` | `mean10` minus the unit's mean over its first 20 cycles | Units start at different levels; the deviation from each unit's own healthy reference isolates degradation from manufacturing differences |
 | `trend10` | `mean10` now minus `mean10` ten cycles earlier, once both windows are complete (0 before cycle 20) | Degradation accelerates near failure, so the rate of change should grow |
+| `cycle` | Age of the unit in operating cycles (once per row, not per sensor) | Passes the pre-registered rule of D-018: +0.0088 grouped PR-AUC, more than one standard deviation |
+
+**Unit age (`cycle`).** Not leakage (the age is known at prediction time), but it may teach the model the lifetimes of this fleet instead of reading its health. Pre-registered rule: include it only if it improves grouped PR-AUC by more than one standard deviation across folds. With the final feature definition (after the warm-up fix): **0.9812 ± 0.0058 with vs 0.9724 ± 0.0076 without**, a gain of +0.0088 that exceeds both standard deviations, so `cycle` is included (D-018). Before the warm-up fix the same comparison gave a gain equal to one standard deviation and `cycle` had been excluded; the rule was applied again to the corrected features. The generalisation risk is accepted and recorded as a limitation. The feature exploration in notebook 02 (sections 1–5) uses the 42 sensor features; the model pipelines use the selected set with `cycle` (`SELECTED_FEATURES` in `industrial_ai.ml.models`).
 
 **Window sizes.** A 10-cycle window is about 5% of the median lifetime and a third of the 30-cycle horizon: long enough to smooth noise, short enough to react within the horizon. Longer windows smooth more but delay detection, which is the central trade-off. The 20-cycle baseline fits within the shortest observed test history (31 cycles). All three values are configurable in `FeatureConfig`.
 
@@ -82,21 +85,20 @@ Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-b
 | Exponentially weighted mean | Redundant with the rolling mean, which is easier to explain |
 | Ratios between sensors | No physically justified combination we can defend; sensor 12 (phi) is already a ratio and tree models capture interactions |
 | Operational settings | Pure noise in FD001 (single regime) |
-| `cycle` (age) | Not leakage, but it may teach "old units fail" instead of health. Pre-registered rule: keep it only if it improves grouped PR-AUC by more than one standard deviation. Result: 0.981 ± 0.006 with vs 0.973 ± 0.008 without, a gain equal to one standard deviation, so it does not pass (see D-018) |
 
 **Results (notebook 02).**
 
 - `delta_baseline` has the strongest correlation with RUL for all 14 sensors (|ρ| up to 0.865 for sensor 11, vs 0.718 raw). The two steps add separate gains: smoothing (raw → rolling mean) adds up to +0.14, mostly for noisy or quantised sensors (3, 17, 2, 20, 21); removing each unit's offset (rolling mean → `delta_baseline`) adds a further +0.03 to +0.14, most for the fan speeds 13 and 8 and for sensors 11, 12 and 7.
 - Sensors 9 and 14 stay far below the rest (−0.37 and −0.21 after the baseline): removing an offset cannot fix trends that go in opposite directions across units.
-- `trend` is the weakest feature on its own (|ρ| 0.20–0.51): the rate of change is noisy and close to zero for most of a unit's life, so any value it has is concentrated near failure. Its contribution is checked with model attributions in block 1.5.
-- **Warm-up artefact found and fixed.** The plot of unit 1 showed a spike in `trend` around cycle 11: during the first cycles the rolling mean is computed over fewer than 10 values, so comparing against it is noisy. `trend` is now 0 until both windows are complete (cycle ≥ window + lag), with a dedicated test. The level (`mean10`) keeps a partial window during warm-up; this only affects cycles far from failure (the shortest lifetime is 128 cycles).
-- Raw sensors and engineered features have not yet been compared under the same protocol (notebook 01 used a single split and a different forest), so 0.961 vs 0.973 is not a fair comparison; block 1.3 includes a raw-sensor baseline under grouped cross-validation.
+- `trend` is the weakest feature on its own (|ρ| 0.20–0.53): the rate of change is noisy and close to zero for most of a unit's life, so any value it has is concentrated near failure. Its contribution is checked with model attributions in block 1.5.
+- **Warm-up artefact found and fixed.** The plot of unit 1 showed a spike in `trend` around cycle 11: during the first cycles the rolling mean is computed over fewer than 10 values, so comparing against it is noisy. `trend` is now 0 until both windows are complete (cycle ≥ window + lag), with a dedicated test. After the fix its correlation with RUL rose slightly for every sensor (sensor 11: −0.511 → −0.532), and the decision on `cycle` changed (D-018). The level (`mean10`) keeps a partial window during warm-up; this only affects cycles far from failure (the shortest lifetime is 128 cycles).
+- Raw sensors and engineered features compared under the same protocol (block 1.3): a random forest on the current-cycle raw sensors reaches 0.951 ± 0.008 grouped PR-AUC vs 0.972 ± 0.008 with the engineered sensor features (without `cycle`), almost halving the remaining error (0.049 → 0.028).
 
 **Input contract.** Features need each unit's complete history (contiguous cycles from 1) because the baseline comes from its first cycles. `build_features` rejects incomplete histories instead of computing misleading values. In production this corresponds to keeping the history since commissioning or the last overhaul.
 
 ## 5. Baselines and model comparison
 
-**Protocol.** Every candidate is a complete Pipeline (`industrial_ai.ml.models.build_pipeline`): raw sensor history → `UnitHistoryFeatures` → (scaling) → classifier. All candidates use the **same five unit folds** as the leakage experiment, and `cross_validate_by_unit` (`industrial_ai.ml.selection`) refits a fresh copy of each pipeline per fold and stores an **out-of-fold score** for every training row: each row is scored by a model that never saw its unit. A spy-model test verifies this property. Model inputs go through `model_inputs`, which keeps only unit, cycle and sensors, so the labels can never enter the model.
+**Protocol.** Every candidate is a complete Pipeline (`industrial_ai.ml.models.build_pipeline`): raw sensor history → `UnitHistoryFeatures` with the selected feature set (42 sensor features + `cycle`) → (scaling) → classifier. All candidates use the **same five unit folds** as the leakage experiment, and `cross_validate_by_unit` (`industrial_ai.ml.selection`) refits a fresh copy of each pipeline per fold and stores an **out-of-fold score** for every training row: each row is scored by a model that never saw its unit. A spy-model test verifies this property. Model inputs go through `model_inputs`, which keeps only unit, cycle and sensors, so the labels can never enter the model.
 
 **Candidates** (from simplest to most complex):
 
@@ -106,7 +108,7 @@ Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-b
 | Random forest | Robust, few sensitive hyperparameters, captures interactions and non-linearities |
 | Gradient boosting (`HistGradientBoostingClassifier`) | Usually the strongest family on tabular data |
 | XGBoost | Industry-standard gradient boosting; included to check whether it adds anything over scikit-learn's implementation |
-| *Reference:* random forest on the raw sensors of the current cycle | Not a candidate: measures what the engineered features add under the same protocol |
+| *Reference:* random forest on the current-cycle values of the same inputs (raw sensors and age) | Not a candidate: measures what the engineered features add under the same protocol |
 
 Only logistic regression is scaled: tree models split on thresholds and are insensitive to monotonic rescaling, while a regularised linear model is not.
 
