@@ -59,7 +59,7 @@ flowchart TD
 | RAG | `industrial_ai.rag` | Vector store, retriever, evidence gate, prompts, grounded generation | 3 |
 | Agent | `industrial_ai.agents` | Tool registry, agent loop, guardrails | 4 |
 | API | `industrial_ai.api` | Routers, schemas, middleware, error handling | 5 |
-| Evaluation | `industrial_ai.evaluation` | ML, RAG and agent metrics | 1, 3, 4, 9 |
+| Evaluation | `industrial_ai.evaluation` | Reusable metrics: alarm thresholds and confusion-matrix metrics (Phase 1), RAG and agent metrics (Phases 3–4), global report (Phase 9) | 1, 3, 4, 9 |
 | Utilities | `industrial_ai.utils` | Structured logging, timing, request IDs | 5 |
 
 Main interfaces between components:
@@ -106,17 +106,27 @@ sequenceDiagram
     API-->>E: JSON response
 ```
 
-## 5. ML pipeline (*Planned — Phase 1*)
+## 5. ML pipeline (*Implemented — Phase 1*)
 
-- **Data:** C-MAPSS FD001 train, test and RUL files, downloaded by a script (not committed).
-- **Validation:** schema and range checks; constant sensors identified in the EDA and dropped.
-- **Labels:** remaining useful life per cycle = last cycle of the unit − current cycle. Binary target: failure within the next *N* cycles (*N* = 30, configurable). For the test set, labels for every cycle are reconstructed from the RUL file.
-- **Features:** computed per engine and only from past cycles (rolling mean/std/min/max, rate of change, exponentially weighted statistics), each one justified by the EDA.
-- **Split:** by engine unit, never by row. Model selection with grouped cross-validation; final evaluation on the official test set.
-- **Models:** logistic regression, random forest and gradient boosting as baselines; XGBoost if it adds value.
-- **Anomaly detection:** Isolation Forest trained on early-life windows, assumed healthy (a documented assumption). Evaluated with the false-alarm rate on early life and the detection lead time before failure.
-- **Explainability:** permutation importance (global) and SHAP (local), presented as model attributions, not causes.
-- **Persistence:** the full scikit-learn `Pipeline` (preprocessing + model) saved with joblib, plus `metadata.json` with version, metrics, feature list and training-data hash.
+Details, results and decisions in [ml.md](ml.md).
+
+- **Data:** C-MAPSS FD001 train, test and RUL files, downloaded by a script that records their checksums (not committed). Structural validation at load time.
+- **Labels:** remaining useful life per cycle; binary target "failure within the next 30 cycles". Test labels are reconstructed for every cycle from the RUL file.
+- **Features:** 14 sensors selected in the EDA; per sensor, a 10-cycle rolling mean, its deviation from the unit's own early-life baseline and its 10-cycle trend, all computed from past cycles only; plus the unit's age (D-016, D-017, D-018).
+- **Validation:** cross-validation grouped by unit (5 folds) for every comparison and for the decision threshold; the official test set is used once (D-003).
+- **Failure classifier:** logistic regression, selected among four candidates with a pre-registered rule (D-015); threshold with recall ≥ 0.90 on out-of-fold scores (D-019).
+- **Anomaly detector:** max |z-score| of the deviation features against a healthy reference (cycles 20–60), label-free threshold with a 1% false-alarm budget, alarm after 3 consecutive cycles (D-021).
+- **Explainability:** exact linear contributions (local and global) and permutation importance grouped by sensor (global, out-of-fold), presented as model attributions, not causes (D-022).
+- **Persistence and inference:** `scripts/train.py` saves both models with joblib and a `metadata.json` (version, environment, data checksums, decision policy, metrics); `Predictor` loads them once and answers per-unit questions (D-023).
+
+```mermaid
+flowchart LR
+    H["Unit history<br/>(cycles 1..t)"] --> F["UnitHistoryFeatures<br/>past-only features"]
+    F --> C["Scaled logistic regression<br/>P(failure ≤ 30 cycles)"]
+    F --> D["Healthy-reference detector<br/>max absolute z-score"]
+    C --> R1["risk + threshold<br/>+ top contributions"]
+    D --> R2["margin + sustained alarm<br/>+ top deviations"]
+```
 
 ## 6. RAG pipeline (*Planned — Phase 3*)
 
