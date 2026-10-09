@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Block 1.4 (section 7, anomaly detection): method implemented, results pending. Sections 8–10 are written in block 1.5.
+> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Block 1.4 (section 7, anomaly detection) done, with results. Sections 8–10 are written in block 1.5.
 
 ## 1. Dataset
 
@@ -211,7 +211,25 @@ Within each band recall is practically the same. The hard band (RUL 21–30) hol
 
 **A caveat found while testing.** On a synthetic check in which only one sensor drifted (2 of the 28 features), Isolation Forest barely reacted while max |z-score| flagged the drift clearly. Isolation Forest draws its splits on randomly chosen features and within the range seen in training, so a large deviation in a few features is diluted and its score saturates once a point leaves the training range. When several sensors drift together, as in FD001 degradation, both methods detect it; the comparison on the real data decides.
 
-**Results.** *To be completed after running notebook 02 (block 1.4).*
+**Results** (notebook 02, sections 12–17; out-of-fold unless stated):
+
+| | max \|z-score\| | Isolation Forest | Classifier (section 8) |
+|---|---|---|---|
+| False alarms on held-out healthy cycles (budget 1%) | 1.4% | 1.1% | — |
+| Units alarmed while healthy (3 consecutive cycles, cycles 20–60) | 7 | 5 | — |
+| Alarms on cycles with RUL > 60 | 35.2% | 34.8% | — |
+| Missed units | 0 | 0 | 0 |
+| Median warning (RUL at first alarm) | 109 | 109 | 26 |
+| Least warning | 62 | 62 | 16 |
+| PR-AUC against the RUL ≤ 30 label | 0.759 | 0.850 | 0.991 |
+
+- **The budget holds on unseen units:** 1.4% and 1.1% of held-out healthy cycles raise an alarm, close to the 1% set on the training reference. With 3 consecutive cycles, 7 (z-score) and 5 (Isolation Forest) of 100 units still raise a spurious alarm early in life.
+- **Selected: max |z-score**, by the pre-registered rule: no missed units for either method and the same median warning, so the simpler method wins. Isolation Forest is marginally better on healthy false alarms (1.1% vs 1.4%, 5 vs 7 units), a difference the rule deliberately does not reward.
+- **The detector sees degradation about 100 cycles before failure.** Every unit's first alarm comes more than 60 cycles before failure (median 109, minimum 62), and the margin trajectories cross the threshold for good around RUL 100–130. That is why 35% of the cycles with RUL > 60 are flagged: most of them are genuine early degradation, not false alarms. "RUL > 60" is not "healthy", and only the healthy-window rate measures false alarms.
+- **Two models, two questions.** The detector answers *has degradation started?* (about 109 cycles of warning, no labels needed); the classifier answers *will it fail within 30 cycles?* (precise timing, PR-AUC 0.991 against that label vs 0.759 for the detector). They are complementary: the detector builds a watch-list early, the classifier says when it becomes urgent.
+- **Deviations beat levels** (ablation): with the levels (`mean10`), the median warning drops from 109 to 66 cycles and the worst case from 62 to 21, with a similar healthy false-alarm rate (1.8% vs 1.4%). Levels look better on alarms with RUL > 60 (11%) only because they detect later. Removing the unit offsets is what makes early detection possible.
+- **Explanation of the most anomalous test unit** (unit 100 at cycle 198, true RUL 20): the largest deviations are the core speeds, sensor 14 (NRc, +61σ) and sensor 9 (Nc, +50σ), followed by sensor 4 (T50, +12σ). These are the sensors whose direction differs between units (notebook 01), which a linear classifier with fixed signs cannot fully use; an absolute deviation from each unit's own healthy state can. This is a second reason why the two models complement each other.
+- **Test set:** the detector flags every positive cycle (recall 1.000) but also 28.7% of the negative ones, and 47 of the 75 units with RUL > 30 at their last cycle; most test units are already past the onset of degradation (median RUL at the last cycle: 86). For the question *failure within 30 cycles* the classifier is far better (last cycle: precision 1.000 vs 0.347); the detector is not meant to answer it.
 
 ## 8. Explainability
 
