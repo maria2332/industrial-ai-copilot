@@ -27,6 +27,9 @@ INPUT_COLUMNS: tuple[str, ...] = (*ID_COLUMNS, *SENSOR_COLUMNS)
 
 INPUT_KINDS = ("features", "raw")
 
+# Feature set selected in Phase 1: the 14 sensors of D-016 plus the unit's age (D-018).
+SELECTED_FEATURES = FeatureConfig(include_cycle=True)
+
 
 def _logistic_regression() -> ClassifierMixin:
     return LogisticRegression(max_iter=2000)
@@ -93,7 +96,9 @@ def build_pipeline(
     """Build an unfitted Pipeline: input step, optional scaling and the classifier.
 
     inputs="features": the engineered features of each unit's history (UnitHistoryFeatures).
-    inputs="raw": the selected sensors of the current cycle only, as a reference baseline.
+    inputs="raw": the current-cycle values of the same inputs (selected sensors, and the age
+    when the configuration includes it), as a reference baseline.
+    feature_config defaults to SELECTED_FEATURES.
     Only logistic regression is scaled: tree models are insensitive to feature scale, while a
     regularised linear model is not.
     """
@@ -102,12 +107,13 @@ def build_pipeline(
     if inputs not in INPUT_KINDS:
         raise ValueError(f"unknown inputs {inputs!r}; expected one of {INPUT_KINDS}")
 
-    config = feature_config or FeatureConfig()
+    config = feature_config or SELECTED_FEATURES
     if inputs == "features":
         input_step = UnitHistoryFeatures(config)
     else:
+        raw_columns = [*config.sensors, *(["cycle"] if config.include_cycle else [])]
         input_step = ColumnTransformer(
-            [("sensors", "passthrough", list(config.sensors))],
+            [("current_cycle", "passthrough", raw_columns)],
             remainder="drop",
             verbose_feature_names_out=False,
         )

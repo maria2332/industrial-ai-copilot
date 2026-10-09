@@ -4,9 +4,15 @@ import numpy as np
 import pytest
 from sklearn.base import clone
 
-from industrial_ai.ml.features import FeatureConfig
+from industrial_ai.ml.features import FeatureConfig, feature_names
 from industrial_ai.ml.labels import LABEL_COLUMN, add_failure_label, add_rul_train
-from industrial_ai.ml.models import INPUT_COLUMNS, MODEL_NAMES, build_pipeline, model_inputs
+from industrial_ai.ml.models import (
+    INPUT_COLUMNS,
+    MODEL_NAMES,
+    SELECTED_FEATURES,
+    build_pipeline,
+    model_inputs,
+)
 
 SKLEARN_MODELS = [name for name in MODEL_NAMES if name != "xgboost"]
 
@@ -43,13 +49,24 @@ def test_only_logistic_regression_is_scaled():
         assert has_scaler == (name == "logistic_regression"), name
 
 
-def test_raw_inputs_are_the_selected_sensors_of_the_current_cycle(labelled):
+def test_default_pipelines_use_the_selected_feature_set():
+    feature_step = build_pipeline("logistic_regression").named_steps["inputs"]
+
+    assert feature_step.config == SELECTED_FEATURES
+    assert SELECTED_FEATURES.include_cycle
+    assert list(feature_step.get_feature_names_out()) == feature_names(SELECTED_FEATURES)
+
+
+@pytest.mark.parametrize("include_cycle", [False, True])
+def test_raw_inputs_are_the_current_cycle_values_of_the_same_inputs(labelled, include_cycle):
+    config = FeatureConfig(include_cycle=include_cycle)
+    expected_columns = [*config.sensors, *(["cycle"] if include_cycle else [])]
     X = model_inputs(labelled)
-    input_step = build_pipeline("random_forest", inputs="raw").named_steps["inputs"]
+    input_step = build_pipeline("random_forest", "raw", config).named_steps["inputs"]
 
     transformed = input_step.fit_transform(X)
 
-    np.testing.assert_array_equal(transformed, X[list(FeatureConfig().sensors)].to_numpy())
+    np.testing.assert_array_equal(transformed, X[expected_columns].to_numpy())
 
 
 def test_hist_gradient_boosting_never_holds_out_random_rows():
