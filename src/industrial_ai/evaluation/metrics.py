@@ -95,3 +95,24 @@ def first_alarms(
     first = first.rename(columns={"cycle": "first_alarm_cycle", "rul": "rul_at_first_alarm"})
     units = pd.Index(sorted(data["unit"].unique()), name="unit")
     return first.reindex(units).astype(float)
+
+
+def summarize_first_alarms(rul_at_first_alarm: pd.Series, horizon: int) -> dict[str, float]:
+    """Classify each unit's first alarm by how long before failure it came.
+
+    missed: no alarm before failure; in window: RUL <= horizon; early: up to twice the horizon
+    before failure; premature: earlier than that. For a classifier a premature alarm is most
+    likely false; for an anomaly detector it may also be the onset of degradation.
+    """
+    rul = rul_at_first_alarm.astype(float)
+    return {
+        "units": float(len(rul)),
+        "missed (no alarm)": float(rul.isna().sum()),
+        f"in window (RUL ≤ {horizon})": float((rul <= horizon).sum()),
+        f"early ({horizon} < RUL ≤ {2 * horizon})": float(
+            rul.between(horizon + 1, 2 * horizon).sum()
+        ),
+        f"premature (RUL > {2 * horizon})": float((rul > 2 * horizon).sum()),
+        "median RUL at first alarm": float(rul.median()),
+        "least warning (min RUL at first alarm)": float(rul.min()),
+    }

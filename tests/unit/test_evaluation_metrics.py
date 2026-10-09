@@ -17,6 +17,7 @@ from industrial_ai.evaluation.metrics import (
     first_alarms,
     last_cycle_mask,
     select_threshold,
+    summarize_first_alarms,
     threshold_metrics,
 )
 
@@ -103,3 +104,17 @@ def test_first_alarm_validates_its_inputs(alarm_history):
         first_alarms(frame, scores, threshold=0.5, consecutive=0)
     with pytest.raises(ValueError, match="one value per row"):
         first_alarms(frame, scores[:-1], threshold=0.5)
+
+
+def test_first_alarm_summary_classifies_each_unit():
+    rul = pd.Series([np.nan, 5.0, 30.0, 31.0, 60.0, 61.0, 120.0], index=range(1, 8))
+
+    summary = summarize_first_alarms(rul, horizon=30)
+
+    assert summary["units"] == 7
+    assert summary["missed (no alarm)"] == 1
+    assert summary["in window (RUL ≤ 30)"] == 2
+    assert summary["early (30 < RUL ≤ 60)"] == 2
+    assert summary["premature (RUL > 60)"] == 2
+    assert summary["median RUL at first alarm"] == pytest.approx(45.5)
+    assert summary["least warning (min RUL at first alarm)"] == 5
