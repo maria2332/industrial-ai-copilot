@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Sections 7–10 are written in blocks 1.4–1.5.
+> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Block 1.4 (section 7, anomaly detection): method implemented, results pending. Sections 8–10 are written in block 1.5.
 
 ## 1. Dataset
 
@@ -182,7 +182,36 @@ Within each band recall is practically the same. The hard band (RUL 21–30) hol
 
 ## 7. Anomaly detection and lead-time evaluation
 
-*Block 1.4.*
+**Why a second model.** The classifier needs failure labels and only knows the fault mode it was trained on. A real plant rarely has many recorded failures, and a new fault mode would not be among them. An anomaly detector answers a different question, *is this unit behaving differently from healthy operation?*, without ever seeing a failure label. Here labels are used only to evaluate it.
+
+**Design** (`industrial_ai.ml.anomaly.AnomalyDetector`, D-021):
+
+- **Healthy reference:** cycles 20–60 of each training unit. Cycle 20 is the first with complete features (baseline and trend windows filled); cycle 60 is still at least 68 cycles before the shortest observed failure. Assumption: degradation is negligible that early.
+- **Features:** deviation features only, `delta_baseline` and `trend` of the 14 sensors (28). Levels are excluded because the unit-to-unit offsets widen the healthy region; `cycle` is excluded because every old cycle would look anomalous, the reference containing only young units.
+- **Methods**, sharing features, reference and threshold rule:
+  - **max |z-score|** (baseline): the largest deviation of any feature from its healthy mean, in healthy standard deviations, the logic of a control chart;
+  - **Isolation Forest** (scikit-learn), fitted on the healthy reference.
+- **Label-free threshold:** the 99th percentile of the scores on the healthy reference, i.e. a **1% false-alarm budget** per cycle. An alarm needs **3 consecutive cycles** above the threshold.
+- **Explanation:** for any cycle, the features with the largest |z-score| with respect to the healthy reference (`top_deviations`). It describes how the unit differs from healthy operation, not why: a deviation is a symptom, not a diagnosed cause.
+
+**Evaluation** (notebook 02, sections 12–17), with the same five unit folds as the classifier: each detector is fitted on the healthy cycles of 80 units and scores the 20 held-out units. Because the threshold is computed on the training reference itself, the out-of-fold false-alarm rate on the held-out units' healthy cycles shows whether the 1% budget holds on unseen units.
+
+| What | Metric |
+|---|---|
+| False alarms | Share of alarms on held-out healthy cycles and on cycles with RUL > 60; units alarmed (3 consecutive cycles) while healthy |
+| Detection | Missed units; RUL at the first alarm (warning time): median and worst case; compared with the classifier under the same alarm rule |
+| Failure window | Precision, recall and PR-AUC against the RUL ≤ 30 label (not what the detector is optimised for) |
+| Test set | False-alarm rate on test cycles with RUL > 60; every-cycle and last-cycle metrics next to the classifier |
+
+**Which metric matters most.** For an unsupervised detector the binding constraint is usually the **false-alarm rate during healthy operation**: an alarm with no visible cause erodes trust quickly. Given an acceptable false-alarm rate, the benefit is **warning time** with no missed units. As with the classifier, this ranking is an assumption about costs, not a universal rule.
+
+**Selection rule** (pre-registered, D-021): fewer missed units wins; with the same number, Isolation Forest is chosen only if its median warning is at least 5 cycles longer and its healthy false-alarm rate is not higher; otherwise the simpler max |z-score|.
+
+**Ablation:** the selected method is also run on the levels (`mean10`) instead of the deviation features, to check that removing unit offsets improves detection.
+
+**A caveat found while testing.** On a synthetic check in which only one sensor drifted (2 of the 28 features), Isolation Forest barely reacted while max |z-score| flagged the drift clearly. Isolation Forest draws its splits on randomly chosen features and within the range seen in training, so a large deviation in a few features is diluted and its score saturates once a point leaves the training range. When several sensors drift together, as in FD001 degradation, both methods detect it; the comparison on the real data decides.
+
+**Results.** *To be completed after running notebook 02 (block 1.4).*
 
 ## 8. Explainability
 
