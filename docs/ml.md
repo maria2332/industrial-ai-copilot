@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Block 1.4 (section 7, anomaly detection) done, with results. Sections 8–10 are written in block 1.5.
+> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Block 1.4 (section 7, anomaly detection) done, with results. Block 1.5 (sections 8–10, explanations, calibration and persistence): method implemented, results pending.
 
 ## 1. Dataset
 
@@ -231,14 +231,56 @@ Within each band recall is practically the same. The hard band (RUL 21–30) hol
 - **Explanation of the most anomalous test unit** (unit 100 at cycle 198, true RUL 20): the largest deviations are the core speeds, sensor 14 (NRc, +61σ) and sensor 9 (Nc, +50σ), followed by sensor 4 (T50, +12σ). These are the sensors whose direction differs between units (notebook 01), which a linear classifier with fixed signs cannot fully use; an absolute deviation from each unit's own healthy state can. This is a second reason why the two models complement each other.
 - **Test set:** the detector flags every positive cycle (recall 1.000) but also 28.7% of the negative ones, and 47 of the 75 units with RUL > 30 at their last cycle; most test units are already past the onset of degradation (median RUL at the last cycle: 86). For the question *failure within 30 cycles* the classifier is far better (last cycle: precision 1.000 vs 0.347); the detector is not meant to answer it.
 
-## 8. Explainability
+## 8. Explainability and calibration
 
-*Block 1.5.*
+**Exact explanations for the selected model** (`industrial_ai.ml.explain`, D-022). The classifier is a logistic regression on standardised features, so its log-odds are exactly
+
+    log-odds(x) = intercept + Σ_j coef_j · z_j,   with z_j = (x_j − training mean_j) / training std_j
+
+and `coef_j · z_j` is the contribution of feature j relative to an average training cycle. The contributions add up exactly to the model's output (verified by a test). For a linear model with independent features this is what SHAP computes, so the `shap` dependency is not needed.
+
+- **Global:** the coefficients, i.e. the change in log-odds per standard deviation of each feature.
+- **Local:** the contributions of each feature for one cycle (`top_contributions`), which the API returns with each prediction.
+
+Two cautions. Correlated features (the level and `delta_baseline` of the same sensor, and the redundant pairs 8/13 and 9/14) share or offset each other's coefficients, and each coefficient is a *conditional* effect: the change in risk when that feature moves and all others stay fixed. Coefficients describe the model, not the physics of the engine.
+
+**Importance by sensor** (`grouped_permutation_importance`): for each of the five unit folds, the model is fitted on the training units; on the validation units, all features of one sensor (or `cycle`) are shuffled together and the drop in PR-AUC is recorded. Grouping by sensor avoids splitting the credit between correlated features; measuring on held-out units avoids rewarding features the model merely memorised.
+
+**Age baseline.** The same protocol is applied to a model that only knows the age of the unit, to one that only knows the sensor features and to the selected one (both), to measure how much of the performance comes from `cycle` (D-018).
+
+**Local case study.** The confident miss of section 6 (a test unit near failure scored low) is explained with its contributions and compared with what the anomaly detector saw at the same cycle.
+
+**Calibration** (D-024). The API reports a *probability* of failure within the horizon, so it should mean what it says. The reliability table groups the scores into ten bins and compares the mean predicted probability with the observed rate; the **expected calibration error** (ECE) is their average gap weighted by bin size, and the **Brier score** is the mean squared error of the probabilities. The test set has a lower prevalence (2.5% vs 15%), but that comes from *which* cycles are observed (truncated units far from failure), not from a different relationship between sensors and failure (covariate shift, not label shift); if so, out-of-fold calibration should carry over to the test set. Rule fixed before looking: recalibrate only if the out-of-fold ECE exceeds 0.05.
+
+**Results.** *To be completed after running notebook 02 (block 1.5).*
 
 ## 9. Model persistence and versioning
 
-*Block 1.5.*
+**Separate training from inference.** `scripts/train.py` repeats the decisions of notebook 02 without the exploration (same features, folds and selection rules: D-015, D-019, D-021), evaluates once on the test set and saves two artifacts. The API only loads them (`industrial_ai.ml.inference.Predictor`); it never trains.
+
+**Layout** (`industrial_ai.ml.registry`, D-023):
+
+    models/failure_classifier/1.0.0/{model.joblib, metadata.json}
+    models/anomaly_detector/1.0.0/{model.joblib, metadata.json}
+
+`metadata.json` records what is needed to trust and reproduce an artifact: name, version, creation time (UTC), Python and library versions, SHA-256 of the training and test files, the feature list, the decision policy (classifier threshold and horizon; detector threshold, healthy window and consecutive-cycle rule) and the cross-validation and test metrics.
+
+- **Immutable versions** (MAJOR.MINOR.PATCH, sorted numerically so 1.10.0 follows 1.9.0): saving over an existing version fails unless `--overwrite` is given. `MODEL_VERSION` sets the version; the latest version is loaded by default.
+- **joblib, with care:** joblib stores scikit-learn objects efficiently, but it is pickle underneath. Loading a file executes code, so only artifacts created by this project are loaded; and pickles are tied to library versions, so a mismatch between the saved and the current versions raises a warning. Portable formats (ONNX, skops) are future work.
+- **Artifacts are not committed** (`models/` is git-ignored): they are reproducible from the script and the data, whose checksums are stored in the metadata.
+
+**Inference contract.** Both models need the complete history of one unit from cycle 1 (the features compare each cycle with the unit's own past) and describe its last cycle:
+
+| `predict_failure` | `detect_anomaly` |
+|---|---|
+| probability, threshold, `high_risk`, horizon, top 3 feature contributions, model version | margin, `anomalous_now`, `sustained_alarm` (3 consecutive cycles), top 3 deviations, model version |
 
 ## 10. Classical ML vs deep learning for this problem
 
-*Block 1.5.*
+Deep learning (LSTMs or 1D CNNs on raw sequences) is popular on C-MAPSS, mostly for regressing the remaining useful life. It was not used here, deliberately:
+
+- **Data size.** 100 training units and about 20,000 strongly autocorrelated rows: the effective sample is closer to 100 trajectories than to 20,000 examples. Sequence models need more data, tuning and compute to be reliable, and are harder to validate without leakage.
+- **Little headroom.** A logistic regression on engineered features reaches PR-AUC 0.991 ± 0.001 with grouped cross-validation, and boosting does not beat it (section 5). The gain came from the features, not from model capacity.
+- **Explainability and operation.** The linear model is explained exactly, trains in about a second and is a few kilobytes on disk.
+
+Deep learning would make sense with many more units, high-frequency raw signals (vibration, acoustic spectra) where hand-crafted features are hard to design, several operating regimes and fault modes (FD002–FD004), or multimodal inputs such as inspection images. A sequence autoencoder for anomaly detection is listed as future work, to be adopted only if it beats the current detector under the same protocol.

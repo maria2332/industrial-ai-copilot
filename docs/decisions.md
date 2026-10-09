@@ -217,3 +217,33 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 - **Reason:** a control-chart baseline is transparent and familiar to plant engineers, so a more complex method has to earn its place. Isolation Forest needs no distributional assumption and captures combinations of features. A label-free threshold keeps the detector honestly unsupervised; labels are used only to evaluate it. Deviation features remove unit offsets, and excluding `cycle` avoids flagging age instead of behaviour.
 - **Trade-offs:** the healthy-reference assumption may label early degradation as normal; a threshold computed on the reference itself is optimistic (measured out-of-fold on unseen units); max |z-score| ignores correlations between features (a Mahalanobis distance would use them, at the cost of estimating a 28 × 28 covariance); Isolation Forest scores saturate outside the training range and dilute deviations confined to a few features. An autoencoder is listed as future work and would only be adopted if it beats both under the same protocol.
 - **Result:** both methods miss no unit and give the same median warning (109 cycles before failure), so the rule selects the simpler max |z-score|. Isolation Forest was marginally better on healthy false alarms (1.1% vs 1.4% of held-out healthy cycles; 5 vs 7 units alarmed while healthy), a difference smaller than the rule requires to justify the more complex method.
+
+## D-022 · Explanations: exact linear contributions and grouped permutation importance
+
+**Status:** Accepted (Phase 1, block 1.5)
+
+- **Problem:** the API must say which inputs drove a prediction, and the project must show what the model relies on, without claiming causality.
+- **Options:** coefficients only; the SHAP library; exact linear contributions; permutation importance per feature or per sensor.
+- **Decision:** exact contributions `coef_j · z_j` for local and global explanations of the selected logistic regression, plus permutation importance grouped by sensor and measured on held-out units. The `shap` dependency is removed.
+- **Reason:** for a linear model on standardised features, the contributions add up exactly to the log-odds and equal SHAP values under feature independence, so a library adds weight without adding information. Grouping by sensor avoids splitting importance between correlated features, and measuring on held-out units avoids rewarding memorisation.
+- **Trade-offs:** the exact decomposition only applies to the linear model; a tree model would need SHAP (TreeExplainer), which would then be added back. Contributions are conditional on the other features, and both methods describe the model, not the engine.
+
+## D-023 · Persistence: joblib artifacts with metadata and immutable versions
+
+**Status:** Accepted (Phase 1, block 1.5)
+
+- **Problem:** the API must load trained models without retraining, and every prediction must be traceable to a model, data and library versions.
+- **Options:** pickle; joblib; ONNX or skops; a model registry such as MLflow.
+- **Decision:** `models/<name>/<version>/model.joblib` plus `metadata.json` (environment, data checksums, decision policy, metrics), immutable MAJOR.MINOR.PATCH versions, a warning on library mismatch, artifacts created only by `scripts/train.py` and not committed to git.
+- **Reason:** joblib handles scikit-learn objects efficiently, and a metadata file gives most of the traceability of a registry with no extra service. Immutable versions make every prediction attributable to one artifact.
+- **Trade-offs:** joblib is pickle underneath: unsafe for untrusted files and tied to library versions (mitigated by loading only own artifacts and the version check). MLflow and portable formats (ONNX, skops) are future work.
+
+## D-024 · Calibration: recalibrate only if needed
+
+**Status:** Accepted (Phase 1, block 1.5) for the rule; the result is recorded after running notebook 02
+
+- **Problem:** the API reports a probability of failure, which should match observed frequencies; the test set has a different prevalence from training.
+- **Options:** report raw probabilities; always recalibrate (Platt scaling or isotonic regression); recalibrate only if a pre-defined check fails.
+- **Decision:** measure the reliability table, expected calibration error (ECE) and Brier score out-of-fold and on the test set; recalibrate only if the out-of-fold ECE exceeds 0.05.
+- **Reason:** logistic regression is usually well calibrated when trained without class weights; recalibrating needs another held-out set and adds complexity. The prevalence shift comes from which cycles are observed (covariate shift), which should not by itself break calibration.
+- **Trade-offs:** the 0.05 threshold is a judgement call; ECE depends on the binning and averages over regions with very different numbers of rows.

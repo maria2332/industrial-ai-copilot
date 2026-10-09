@@ -70,7 +70,7 @@ Full design in [docs/architecture.md](docs/architecture.md) · design decisions 
 | Layer | Choice |
 |---|---|
 | Language | Python 3.12 |
-| Data & ML | pandas, NumPy, SciPy, scikit-learn, XGBoost, SHAP |
+| Data & ML | pandas, NumPy, SciPy, scikit-learn, XGBoost |
 | LLM | Ollama (local, default) or OpenAI, behind a provider interface |
 | Embeddings | sentence-transformers (Hugging Face) |
 | Vector store | ChromaDB |
