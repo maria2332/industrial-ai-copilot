@@ -146,13 +146,14 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 
 ## D-015 · Final failure-prediction model
 
-**Status:** Proposed — rule accepted (Phase 1, block 1.3); the chosen model is recorded after running notebook 02
+**Status:** Accepted (Phase 1, block 1.3) — logistic regression
 
 - **Problem:** choose one model among several candidates whose scores may differ by less than the noise between folds.
 - **Options:** the highest mean PR-AUC; the highest score on the test set; the simplest candidate that performs as well as the best.
 - **Decision:** the simplest candidate (logistic regression < random forest < gradient boosting < XGBoost) whose mean PR-AUC under grouped 5-fold cross-validation is within one standard deviation of the best candidate's mean. Rule fixed before seeing the results.
 - **Reason:** with 100 units, small differences in mean PR-AUC are within fold-to-fold variation; choosing by the maximum would reward noise. Choosing on the test set would leave no unbiased estimate of performance. Accuracy is not used (85% for a model that never predicts failure).
 - **Trade-offs:** a slightly better model may be passed over when its advantage is smaller than the noise; the complexity order is a judgement call.
+- **Result:** logistic regression (0.991 ± 0.001) is within the band of the best candidates (gradient boosting and XGBoost, 0.992 ± 0.004; band from 0.988), and is also the most stable and the fastest. Random forest (0.982 ± 0.006) falls outside the band. A linear model also makes block 1.5 simpler: its coefficients are a first, global explanation.
 
 ## D-016 · Sensor selection: explicit list from the EDA
 

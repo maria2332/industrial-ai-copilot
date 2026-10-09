@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6): method implemented, results pending. Sections 7–10 are written in blocks 1.4–1.5.
+> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Sections 7–10 are written in blocks 1.4–1.5.
 
 ## 1. Dataset
 
@@ -118,7 +118,21 @@ Only logistic regression is scaled: tree models split on thresholds and are inse
 
 **Selection rule** (pre-registered, D-015): the simplest candidate whose mean PR-AUC is within one standard deviation of the best candidate's mean (that candidate's standard deviation across folds). A difference smaller than the fold-to-fold noise is not evidence for a more complex model.
 
-**Results.** *To be completed after running notebook 02 (block 1.3).*
+**Results** (notebook 02, section 6; selected feature set with `cycle`; grouped 5-fold cross-validation):
+
+| Candidate | PR-AUC | ROC-AUC | Training time, 5 folds (s) |
+|---|---|---|---|
+| *Reference:* random forest, current-cycle raw sensors and age | 0.952 ± 0.008 | 0.990 ± 0.002 | 6.5 |
+| Logistic regression | **0.991 ± 0.001** | 0.998 ± 0.000 | 1.3 |
+| Random forest | 0.982 ± 0.006 | 0.997 ± 0.001 | 9.2 |
+| Gradient boosting | 0.992 ± 0.004 | 0.998 ± 0.001 | 5.2 |
+| XGBoost | 0.992 ± 0.004 | 0.998 ± 0.001 | 5.5 |
+
+- **Selected: logistic regression.** The best mean is 0.992 ± 0.004 (gradient boosting), so the band starts at 0.988; logistic regression (0.991) is inside it and is the simplest candidate. It is also the most stable across folds (± 0.001) and the fastest.
+- **The gain comes from the features, not from model complexity.** With the same random forest, engineered features reach 0.982 vs 0.952 with the current-cycle raw values: the remaining error falls from 0.048 to 0.018. The reference is the lowest model in every fold. A linear model is enough because `delta_baseline` is almost monotonic with RUL.
+- **XGBoost adds nothing** over scikit-learn's gradient boosting: both give identical scores and almost identical curves per fold.
+- **Fold variability.** Logistic regression is nearly flat across folds (0.991–0.993), while the tree models vary more; the ranking between the top models changes from fold to fold, which is what the selection rule protects against.
+- **Effect of `cycle`.** Logistic regression improved from 0.973 ± 0.005 without `cycle` (earlier run, same protocol) to 0.991 ± 0.001 with it, a larger gain than the random forest's (+0.009 in the ablation of block 1.2). Because a linear model cannot build interactions from the sensor features alone, the age may be compensating for that, or the model may lean on this fleet's lifetimes. How much the model relies on `cycle` is checked in block 1.5 (attributions and an age-only baseline).
 
 ## 6. Metrics and decision-threshold selection
 
@@ -141,7 +155,30 @@ Only logistic regression is scaled: tree models split on thresholds and are inse
 
 **Final test evaluation.** The selected pipeline is refitted on all 100 training units and evaluated **once** on the test set with the threshold from cross-validation, in two views: every cycle (continuous monitoring) and the last observed cycle per unit (the usual benchmark protocol). Recall should be comparable with cross-validation; precision and PR-AUC are expected to be lower on all test cycles because of the prevalence shift (section 2).
 
-**Results.** *To be completed after running notebook 02 (block 1.3).*
+**Results** (notebook 02, sections 8–10; logistic regression with the selected feature set).
+
+*Threshold.* The rule selects **0.748**. At 0.5 the out-of-fold recall is already 0.943, so the rule raises the threshold to buy precision while keeping recall ≥ 0.90: precision 0.947 → 0.979 and false alarms 165 → 59 (false positive rate 0.9% → 0.3%), at the cost of 126 detected positive cycles. A different rule (for example, maximum recall with precision ≥ 0.95, or an expected-cost rule) would choose differently; the choice reflects the assumption of D-019.
+
+| View | Prevalence | PR-AUC | Precision | Recall | False positive rate | TP / FP / FN / TN |
+|---|---|---|---|---|---|---|
+| Cross-validation (out-of-fold) | 0.150 | 0.991 | 0.979 | 0.902 | 0.003 | 2797 / 59 / 303 / 17472 |
+| Test, every cycle | 0.025 | 0.955 | 0.943 | 0.798 | 0.001 | 265 / 16 / 67 / 12748 |
+| Test, last cycle per unit | 0.250 | 0.997 | 1.000 | 0.920 | 0.000 | 23 / 0 / 2 / 75 |
+
+*Accuracy trap.* A model that never predicts failure is 85.0% accurate on the training cycles; the selected model's 98.2% hides that it still misses 10% of the positive cycles.
+
+*Alarms per unit (out-of-fold).* No unit fails without an alarm. With 1 cycle: 80 units alarm in the window (RUL ≤ 30), 20 early (31–60 cycles before failure) and none prematurely; median warning 28 cycles. Requiring 3 consecutive cycles moves 9 units from early to in window, with a median warning of 26 cycles. The worst case (unit 67) still gets 18 cycles of warning (16 with 3 consecutive cycles). The premature alarm seen without `cycle` disappears.
+
+*Test set and prevalence.* Precision holds on all test cycles (0.943) despite the drop in prevalence (0.150 → 0.025) because the false positive rate also drops: most test cycles are far from failure, where the model is very confident. Recall drops (0.902 → 0.798), and the reason is the mix of cycles, not a weaker model:
+
+| Recall by distance to failure | RUL 0–10 | RUL 11–20 | RUL 21–30 |
+|---|---|---|---|
+| Cross-validation (positive cycles) | 1.000 (1100) | 0.997 (1000) | 0.700 (1000) |
+| Test, every cycle (positive cycles) | 1.000 (17) | 1.000 (106) | 0.679 (209) |
+
+Within each band recall is practically the same. The hard band (RUL 21–30) holds 32% of the positives in cross-validation but 63% on the test set, because truncated test units contribute few positive cycles, mostly close to the horizon. Applying the cross-validation recall of each band to the test mix gives 0.810, so the mix explains almost all of the drop (0.902 → 0.810); the remaining 0.012 comes from the hard band.
+
+*Where the errors are.* At the last observed cycle there are no false positives: test units at RUL 34, 37 and 38 score 0.41, 0.23 and 0.06, and every unit beyond RUL 40 scores close to 0. Of the two misses, one is a near miss (RUL ≈ 26, score 0.69) and the other is a **confident miss** (RUL ≈ 28, score 0.20), the only clear error of the model; it is investigated with local attributions in block 1.5.
 
 ## 7. Anomaly detection and lead-time evaluation
 
