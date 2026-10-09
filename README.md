@@ -9,7 +9,7 @@
 > [!IMPORTANT]
 > All industrial documentation used in this project is synthetic and created exclusively for demonstration purposes. This is an independent, educational proof of concept: it is not affiliated with or built for any company, it uses no private or confidential data, and it must not be used for real operational decisions.
 
-   **Status:** 🚧 Phase 1 — dataset and machine learning (in progress). See the [roadmap](#roadmap).
+   **Status:** ✅ Phase 1 (dataset and machine learning) complete · next: Phase 2, synthetic technical documents. See the [roadmap](#roadmap).
 
 ## Overview
 
@@ -56,8 +56,8 @@ Full design in [docs/architecture.md](docs/architecture.md) · design decisions 
 
 ## Features
 
-- [ ] Failure-risk prediction with explanation of the main contributing variables (Phase 1)
-- [ ] Unsupervised anomaly detection on sensor data (Phase 1)
+- [x] Failure-risk prediction (probability of failure within 30 cycles) with the main contributing variables (Phase 1)
+- [x] Unsupervised anomaly detection against a healthy reference, with the most deviating variables (Phase 1)
 - [ ] Synthetic, internally consistent technical documentation (Phase 2)
 - [ ] RAG with citations, evidence gate and numeric grounding check (Phase 3)
 - [ ] Read-only agent with real tools (Phase 4)
@@ -92,7 +92,17 @@ The raw data is not redistributed in this repository; it is downloaded by a scri
 
 ## ML Pipeline
 
-*Implemented in Phase 1.* Leakage-safe pipeline: validation → label definition (failure within the next N cycles) → past-only rolling features per engine → split by engine unit → baseline comparison → threshold selection → explainability → versioned model artifacts. Details in [docs/ml.md](docs/ml.md).
+Two complementary models on the sensor history of each unit, both validated with cross-validation grouped by unit (never by row) and evaluated once on the official test set. Details in [docs/ml.md](docs/ml.md), decisions in [docs/decisions.md](docs/decisions.md).
+
+| | Failure classifier | Anomaly detector |
+|---|---|---|
+| Question | Will this unit fail within 30 cycles? | Has it started to deviate from healthy operation? |
+| Method | Logistic regression on past-only features (rolling level, deviation from the unit's own baseline, trend) and the unit's age | Max \|z-score\| of the deviation features against a healthy reference; no failure labels |
+| Decision rule | Threshold 0.748: recall ≥ 0.90 on out-of-fold scores | 1% false-alarm budget on healthy cycles; alarm after 3 consecutive cycles |
+| Key result | PR-AUC 0.991 ± 0.001; test (last cycle per unit): precision 1.000, recall 0.920 | No missed units; median warning 109 cycles before failure |
+| Explanation | Exact contribution of each feature to the log-odds | Features with the largest deviation from healthy |
+
+The detector warns early (degradation has started); the classifier says when it becomes urgent. On the test set, the only unit the classifier clearly missed was flagged by the detector.
 
 ## RAG Pipeline
 
@@ -129,14 +139,35 @@ git clone https://github.com/maria2332/industrial-ai-copilot.git
 cd industrial-ai-copilot
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[dev,ml]"
 pre-commit install
 cp .env.example .env               # Windows: copy .env.example .env
 ```
 
 ## Usage
 
-*Available from Phase 5 (API) and Phase 7 (`docker compose up`).*
+Train and save the models (Phase 1):
+
+```bash
+python scripts/download_data.py    # NASA C-MAPSS, with checksums
+python scripts/train.py            # saves models/failure_classifier/1.0.0 and models/anomaly_detector/1.0.0
+```
+
+Predict for one unit from its complete sensor history:
+
+```python
+from industrial_ai.ml.data import load_trajectories
+from industrial_ai.ml.inference import Predictor
+
+predictor = Predictor.load()
+test = load_trajectories("FD001", "test")
+history = test[test["unit"] == 18]
+
+print(predictor.predict_failure(history).as_dict())  # probability, threshold, top features
+print(predictor.detect_anomaly(history).as_dict())  # margin, sustained alarm, top deviations
+```
+
+The exploration behind every decision is in `notebooks/01_data_exploration.ipynb` and `notebooks/02_predictive_maintenance.ipynb`. The API (Phase 5) and `docker compose up` (Phase 7) come later.
 
 ## Testing
 
@@ -150,9 +181,21 @@ The same checks run automatically on GitHub Actions for every push to `main` and
 
 ## Evaluation
 
-*Results will be reported in Phase 9.* Planned metrics:
+**ML (Phase 1)** — grouped 5-fold cross-validation on 100 training units; official test set used once:
 
-- **ML:** PR-AUC, ROC-AUC, precision, recall, F1 and confusion matrix at the selected threshold; for anomaly detection, false-alarm rate on early life and detection lead time before failure.
+| Metric | Cross-validation (out-of-fold) | Test, every cycle | Test, last cycle per unit |
+|---|---|---|---|
+| Prevalence (random-model PR-AUC) | 0.150 | 0.025 | 0.250 |
+| Classifier PR-AUC | 0.991 | 0.955 | 0.997 |
+| Classifier precision / recall at 0.748 | 0.979 / 0.902 | 0.943 / 0.798 | 1.000 / 0.920 |
+| Calibration error (ECE) | 0.003 | 0.002 | — |
+| Detector false alarms on healthy cycles | 1.4% | — | — |
+| Detector warning (median / minimum, cycles before failure) | 109 / 62 | — | — |
+
+The lower test recall on every cycle comes from the mix of cycles (most test positives lie close to the 30-cycle horizon), not from a weaker model: recall within each distance-to-failure band matches cross-validation.
+
+*Planned for later phases:*
+
 - **RAG:** retrieval hit@k and MRR, exact numeric correctness (with units), citation correctness, groundedness and correct abstention on unanswerable questions.
 - **Agent:** tool-selection accuracy, task completion and documented failure cases.
 - **API:** p50/p95 latency and error-path coverage.
@@ -162,6 +205,7 @@ The same checks run automatically on GitHub Actions for every push to `main` and
 - Sensor data comes from a public **simulation** of an aircraft turbofan, used as a proxy; real plant data would differ in noise, sampling, operating regimes and failure modes.
 - All technical documentation is **synthetic**.
 - Models are **not validated for production** and the decision threshold reflects assumptions, not a real cost analysis.
+- The linear classifier gives each sensor a single direction; a unit whose core speed falls instead of rising can be underestimated (one confident miss on the test set, which the anomaly detector flagged).
 - The LLM can make mistakes; mitigations reduce but do not eliminate this risk.
 - RAG quality depends on the quality and coverage of the documentation.
 - The failure model uses the unit's age (`cycle`), which may partly reflect the lifetimes of this simulated fleet; units with very different lives could be misjudged.
@@ -184,7 +228,7 @@ Computer vision for inspection, OCR, multimodal RAG, digital twins, real-time st
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Architecture and scaffolding | ✅ Done |
-| 1 | Dataset + ML | 🚧 In progress |
+| 1 | Dataset + ML | ✅ Done |
 | 2 | Synthetic technical documents | ⏳ |
 | 3 | RAG | ⏳ |
 | 4 | Agent | ⏳ |

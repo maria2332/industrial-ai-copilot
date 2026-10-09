@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6, model comparison and threshold) done, with results. Block 1.4 (section 7, anomaly detection) done, with results. Block 1.5 (sections 8–10, explanations, calibration and persistence): method implemented, results pending.
+> **Status:** Phase 1 complete. Blocks 1.1–1.5 (data, features, classifier, anomaly detector, explanations, calibration and persistence) done, with results. Open issues and next steps in section 11.
 
 ## 1. Dataset
 
@@ -252,7 +252,14 @@ Two cautions. Correlated features (the level and `delta_baseline` of the same se
 
 **Calibration** (D-024). The API reports a *probability* of failure within the horizon, so it should mean what it says. The reliability table groups the scores into ten bins and compares the mean predicted probability with the observed rate; the **expected calibration error** (ECE) is their average gap weighted by bin size, and the **Brier score** is the mean squared error of the probabilities. The test set has a lower prevalence (2.5% vs 15%), but that comes from *which* cycles are observed (truncated units far from failure), not from a different relationship between sensors and failure (covariate shift, not label shift); if so, out-of-fold calibration should carry over to the test set. Rule fixed before looking: recalibrate only if the out-of-fold ECE exceeds 0.05.
 
-**Results.** *To be completed after running notebook 02 (block 1.5).*
+**Results** (notebook 02, sections 19–23):
+
+- **Coefficients.** The largest coefficient is `cycle`, and it is **negative** (−6.4 log-odds per standard deviation): *at the same sensor deviations*, an older unit is less likely to fail within 30 cycles. The deviations grow with age, so reaching a given deviation early in life signals fast degradation, while reaching it late signals a slow degrader. The model uses age to turn "how far from healthy" into "how fast", not to say that old units fail. Among sensor features the largest are the fan speed deviation (`sensor_8_delta_baseline`, +3.1) and several levels; correlated pairs share or offset each other's weight (for example `sensor_17_mean10` −1.3 and `sensor_17_delta_baseline` +0.9), so single coefficients should not be read in isolation.
+- **Importance by sensor** (drop in out-of-fold PR-AUC when shuffled): sensor 8 (Nf) 0.108 ± 0.044, `cycle` 0.077 ± 0.013, sensor 9 (Nc) 0.074 ± 0.021, sensor 12 (phi) 0.042, sensor 11 (Ps30) 0.023, sensor 14 (NRc) 0.018; the rest below 0.015. Importance is not correlation: sensors 4, 11 and 7 had the strongest correlations with RUL (section 1) but low importance, because most sensors carry the same degradation signal and the model can do without any one of them. Grouping by sensor handles correlation *within* a sensor but not *across* sensors: the fitted model relies on fan speed 8 rather than its near-twin 13, so a low importance for 13 does not mean that 13 is uninformative. Refitting without each group (drop-column importance) would measure uniqueness; listed as future work.
+- **Age baseline** (grouped cross-validation): age only PR-AUC 0.526 ± 0.029 (random model 0.15), sensors only 0.973 ± 0.005, both 0.991 ± 0.001. Age alone is a weak predictor; the model is driven by the sensors, and age adds +0.018 by interacting with them. The reliance on `cycle` is real (second in importance) and specific to this fleet's degradation rates, which confirms the limitation recorded in D-018.
+- **The confident miss** (test unit 18, cycle 133, true RUL 28, risk 0.199 for a threshold of 0.748). Its fan speed had moved far from its own baseline (`sensor_8_delta_baseline` contributes +7.1), but its absolute levels were not yet in the range typical of failure, and its **core speed had fallen** instead of rising: `sensor_9_delta_baseline` contributes −1.7, because the model learned a positive sign for it. This is the behaviour seen in notebook 01, where sensors 9 and 14 moved in opposite directions in different units; a linear model with one sign per feature cannot follow both. **The anomaly detector flagged the same cycle strongly** (margin +10.0, sustained alarm): fan speed +13.5σ, corrected core speed (sensor 14) −10.0σ and sensor 20 −10.0σ from its healthy reference, because it uses absolute deviations. For comparison, test unit 40 at the same cycle and RUL (risk 0.931) was caught through its levels (sensors 11, 12, 15 and 17). The two models together would not have missed unit 18; the agent of Phase 4 will report both.
+- **Calibration.** Out-of-fold: ECE 0.0031, Brier score 0.0117. Test, every cycle: ECE 0.0020, Brier score 0.0047. Both are far below the 0.05 rule, so **no recalibration** (D-024). The reliability diagram follows the diagonal, with a slight overestimation between 0.5 and 0.7 where only about 90 cycles per bin fall. Calibration carries over to the test set despite the prevalence shift, which supports the covariate-shift explanation; the Brier score is lower on test only because most test cycles are far from failure and easy.
+- **Saved artifacts.** `scripts/train.py` reproduces the notebook exactly (PR-AUC 0.991 ± 0.001, threshold 0.748, test last-cycle recall 0.920; detector healthy false alarms 1.4%, median warning 109 cycles), and the loaded `Predictor` returns the same probability as the notebook for unit 18 (0.199).
 
 ## 9. Model persistence and versioning
 
@@ -284,3 +291,12 @@ Deep learning (LSTMs or 1D CNNs on raw sequences) is popular on C-MAPSS, mostly 
 - **Explainability and operation.** The linear model is explained exactly, trains in about a second and is a few kilobytes on disk.
 
 Deep learning would make sense with many more units, high-frequency raw signals (vibration, acoustic spectra) where hand-crafted features are hard to design, several operating regimes and fault modes (FD002–FD004), or multimodal inputs such as inspection images. A sequence autoencoder for anomaly detection is listed as future work, to be adopted only if it beats the current detector under the same protocol.
+
+## 11. Open issues and next steps
+
+- **The test set is no longer untouched.** Unit 18 was examined in detail, so any change motivated by it (for example, absolute deviations for sensors 9 and 14, or combining both models into one score) must be validated with grouped cross-validation and reported as a new model version, not as a test-set result.
+- **Age as a rate.** The negative coefficient of `cycle` suggests an explicit degradation-rate feature (deviation per cycle of age) could replace the raw age and generalise better to fleets with other lifetimes.
+- **Direction-free sensor effects.** Absolute deviations of the core speeds, or the detector's margin as an input, would let the classifier use sensors whose direction differs between units.
+- **Drop-column importance**, to separate what a sensor uniquely contributes from what the fitted model happens to rely on.
+- **Tuning with nested cross-validation**, the other C-MAPSS subsets (FD002–FD004, several operating regimes and fault modes) and a sequence autoencoder for anomaly detection, under the same protocol.
+- **Combining both models** in the API and the agent: the detector as an early watch-list, the classifier for urgency (Phases 4–5).

@@ -186,6 +186,7 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 - **History:** the first evaluation, run with the trend warm-up artefact, gave a gain equal to one standard deviation (0.981 ± 0.006 vs 0.973 ± 0.008), so `cycle` was excluded. After fixing the artefact the rule was applied again, unchanged, to the corrected features, and the result changed. The rule decides, not the preference expressed earlier.
 - **Reason:** following a pre-registered rule in both directions keeps the decision honest; a measurable gain above the fold-to-fold noise is evidence, not chance.
 - **Trade-offs:** the model may partly rely on the age distribution of this simulated fleet (lifetimes of 128–362 cycles). Units with much longer or shorter lives, or another fleet, could be misjudged by their age. Recorded as a limitation; feature attributions in block 1.5 will show how much the model relies on `cycle`.
+- **Evidence (block 1.5):** `cycle` is the second most important input (PR-AUC drop 0.077 when shuffled) but a weak predictor alone (PR-AUC 0.526 vs 0.973 for the sensors). Its coefficient is negative: at equal sensor deviations an older unit is at lower risk, so the model uses age to read the rate of degradation rather than learning that old units fail. That rate is specific to this fleet, so the limitation stands.
 
 ## D-019 · Decision threshold: recall ≥ 0.90 on out-of-fold scores
 
@@ -227,6 +228,7 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 - **Decision:** exact contributions `coef_j · z_j` for local and global explanations of the selected logistic regression, plus permutation importance grouped by sensor and measured on held-out units. The `shap` dependency is removed.
 - **Reason:** for a linear model on standardised features, the contributions add up exactly to the log-odds and equal SHAP values under feature independence, so a library adds weight without adding information. Grouping by sensor avoids splitting importance between correlated features, and measuring on held-out units avoids rewarding memorisation.
 - **Trade-offs:** the exact decomposition only applies to the linear model; a tree model would need SHAP (TreeExplainer), which would then be added back. Contributions are conditional on the other features, and both methods describe the model, not the engine.
+- **Observed limitation (block 1.5):** grouping handles correlation within a sensor but not across near-redundant sensors (8/13, 9/14): the fitted model relies on one of each pair, so low importance does not mean no information. Drop-column importance is listed as future work.
 
 ## D-023 · Persistence: joblib artifacts with metadata and immutable versions
 
@@ -240,10 +242,11 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 
 ## D-024 · Calibration: recalibrate only if needed
 
-**Status:** Accepted (Phase 1, block 1.5) for the rule; the result is recorded after running notebook 02
+**Status:** Accepted (Phase 1, block 1.5) — no recalibration
 
 - **Problem:** the API reports a probability of failure, which should match observed frequencies; the test set has a different prevalence from training.
 - **Options:** report raw probabilities; always recalibrate (Platt scaling or isotonic regression); recalibrate only if a pre-defined check fails.
 - **Decision:** measure the reliability table, expected calibration error (ECE) and Brier score out-of-fold and on the test set; recalibrate only if the out-of-fold ECE exceeds 0.05.
 - **Reason:** logistic regression is usually well calibrated when trained without class weights; recalibrating needs another held-out set and adds complexity. The prevalence shift comes from which cycles are observed (covariate shift), which should not by itself break calibration.
 - **Trade-offs:** the 0.05 threshold is a judgement call; ECE depends on the binning and averages over regions with very different numbers of rows.
+- **Result:** ECE 0.0031 out-of-fold and 0.0020 on all test cycles (Brier score 0.0117 and 0.0047), far below 0.05: the probabilities are reported as they are. Calibration holds on the test set despite the prevalence shift.
