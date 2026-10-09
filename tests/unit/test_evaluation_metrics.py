@@ -14,8 +14,10 @@ import pandas as pd
 import pytest
 
 from industrial_ai.evaluation.metrics import (
+    expected_calibration_error,
     first_alarms,
     last_cycle_mask,
+    reliability_table,
     select_threshold,
     summarize_first_alarms,
     threshold_metrics,
@@ -118,3 +120,29 @@ def test_first_alarm_summary_classifies_each_unit():
     assert summary["premature (RUL > 60)"] == 2
     assert summary["median RUL at first alarm"] == pytest.approx(45.5)
     assert summary["least warning (min RUL at first alarm)"] == 5
+
+
+def test_reliability_table_by_hand():
+    scores = [0.05] * 10 + [0.95] * 10
+    labels = [1] + [0] * 9 + [1] * 8 + [0] * 2
+
+    table = reliability_table(labels, scores, n_bins=10)
+
+    assert table["count"].tolist() == [10, 10]
+    np.testing.assert_allclose(table["mean_predicted"], [0.05, 0.95])
+    np.testing.assert_allclose(table["observed_rate"], [0.1, 0.8])
+    # weighted gap: 0.5 * |0.05 - 0.1| + 0.5 * |0.95 - 0.8| = 0.1
+    assert expected_calibration_error(table) == pytest.approx(0.1)
+
+
+def test_calibrated_scores_have_a_small_calibration_error():
+    rng = np.random.default_rng(0)
+    scores = rng.uniform(size=20_000)
+    labels = rng.uniform(size=20_000) < scores
+
+    assert expected_calibration_error(reliability_table(labels, scores)) < 0.02
+
+
+def test_reliability_table_checks_lengths():
+    with pytest.raises(ValueError, match="same length"):
+        reliability_table([0, 1], [0.5])

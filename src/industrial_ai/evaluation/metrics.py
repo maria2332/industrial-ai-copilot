@@ -116,3 +116,33 @@ def summarize_first_alarms(rul_at_first_alarm: pd.Series, horizon: int) -> dict[
         "median RUL at first alarm": float(rul.median()),
         "least warning (min RUL at first alarm)": float(rul.min()),
     }
+
+
+def reliability_table(y_true: ArrayLike, scores: ArrayLike, n_bins: int = 10) -> pd.DataFrame:
+    """Predicted probability vs observed frequency, in equal-width probability bins.
+
+    A calibrated model has observed_rate close to mean_predicted in every bin. Empty bins are
+    dropped.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    scores = np.asarray(scores, dtype=float)
+    if len(y_true) != len(scores):
+        raise ValueError("y_true and scores must have the same length")
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    bins = pd.cut(scores, edges, include_lowest=True)
+    table = (
+        pd.DataFrame({"bin": bins, "score": scores, "label": y_true})
+        .groupby("bin", observed=True)
+        .agg(
+            count=("label", "size"),
+            mean_predicted=("score", "mean"),
+            observed_rate=("label", "mean"),
+        )
+    )
+    return table
+
+
+def expected_calibration_error(table: pd.DataFrame) -> float:
+    """Average gap between predicted and observed rates, weighted by the rows in each bin."""
+    weights = table["count"] / table["count"].sum()
+    return float((weights * (table["mean_predicted"] - table["observed_rate"]).abs()).sum())
