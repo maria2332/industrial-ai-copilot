@@ -59,7 +59,7 @@ flowchart TD
 | RAG | `industrial_ai.rag` | Vector store, retriever, evidence gate, prompts, grounded generation | 3 |
 | Agent | `industrial_ai.agents` | Tool registry, agent loop, guardrails | 4 |
 | API | `industrial_ai.api` | Routers, schemas, middleware, error handling | 5 |
-| Evaluation | `industrial_ai.evaluation` | ML, RAG and agent metrics | 1, 3, 4, 9 |
+| Evaluation | `industrial_ai.evaluation` | Reusable metrics: alarm thresholds and confusion-matrix metrics (Phase 1), RAG and agent metrics (Phases 3–4), global report (Phase 9) | 1, 3, 4, 9 |
 | Utilities | `industrial_ai.utils` | Structured logging, timing, request IDs | 5 |
 
 Main interfaces between components:

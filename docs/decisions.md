@@ -146,9 +146,13 @@ Status is *Accepted*, *Proposed* (to be validated in a later phase) or *Pending*
 
 ## D-015 · Final failure-prediction model
 
-**Status:** Pending — decided in Phase 1
+**Status:** Proposed — rule accepted (Phase 1, block 1.3); the chosen model is recorded after running notebook 02
 
-Chosen after comparing logistic regression, random forest, gradient boosting and XGBoost with grouped cross-validation, primarily on PR-AUC and on precision at the recall required by the operating threshold, not on accuracy.
+- **Problem:** choose one model among several candidates whose scores may differ by less than the noise between folds.
+- **Options:** the highest mean PR-AUC; the highest score on the test set; the simplest candidate that performs as well as the best.
+- **Decision:** the simplest candidate (logistic regression < random forest < gradient boosting < XGBoost) whose mean PR-AUC under grouped 5-fold cross-validation is within one standard deviation of the best candidate's mean. Rule fixed before seeing the results.
+- **Reason:** with 100 units, small differences in mean PR-AUC are within fold-to-fold variation; choosing by the maximum would reward noise. Choosing on the test set would leave no unbiased estimate of performance. Accuracy is not used (85% for a model that never predicts failure).
+- **Trade-offs:** a slightly better model may be passed over when its advantage is smaller than the noise; the complexity order is a judgement call.
 
 ## D-016 · Sensor selection: explicit list from the EDA
 
@@ -180,3 +184,23 @@ Chosen after comparing logistic regression, random forest, gradient boosting and
 - **Evidence:** 0.981 ± 0.006 with `cycle` vs 0.973 ± 0.008 without. The gain (+0.008) equals one standard deviation at the reported precision, so it does not exceed the threshold.
 - **Reason:** a borderline result defaults to the simpler model, and the generalisation risk remains: a unit with a longer or shorter life, or another fleet, would be judged by its age rather than its condition.
 - **Trade-offs:** a possible small gain on this benchmark is given up in exchange for a model that reads health signals only.
+
+## D-019 · Decision threshold: recall ≥ 0.90 on out-of-fold scores
+
+**Status:** Accepted (Phase 1, block 1.3)
+
+- **Problem:** turning a risk score into an alarm needs a threshold, and 0.5 has no justification.
+- **Options:** 0.5; maximise F1; a minimum recall with the best precision; minimise expected cost.
+- **Decision:** the threshold with the highest precision among those reaching recall ≥ 0.90, chosen on the out-of-fold scores of the selected model.
+- **Reason:** in this scenario a missed warning window is assumed to cost more than an unnecessary inspection. Out-of-fold scores come from models that never saw the unit, so the threshold is not tuned on optimistic training predictions or on the test set.
+- **Trade-offs:** the 0.90 target is an assumption, not a cost analysis; real maintenance costs would lead to an expected-cost threshold. A recall target accepts more false alarms, which can cause alarm fatigue.
+
+## D-020 · Fixed hyperparameters, no tuning in Phase 1
+
+**Status:** Accepted (Phase 1, block 1.3)
+
+- **Problem:** hyperparameters can be tuned, but the same 100 units are used to compare models and choose the threshold.
+- **Options:** grid or random search on the same folds; nested cross-validation; fixed, reasonable defaults.
+- **Decision:** fixed defaults (e.g. random forest with 300 trees and at least 5 samples per leaf; gradient boosting with learning rate 0.05 and 300 iterations), and early stopping disabled in `HistGradientBoostingClassifier`.
+- **Reason:** tuning on the same folds used for comparison makes the comparison optimistic, and nested cross-validation adds cost and complexity that a portfolio PoC does not need. Scikit-learn's early stopping would hold out a random 10% of training rows, which is the leaky random split this project avoids.
+- **Trade-offs:** candidates may be slightly below their best possible performance; nested cross-validation is listed as an improvement.

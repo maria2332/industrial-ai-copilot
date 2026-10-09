@@ -1,6 +1,6 @@
 # Machine Learning
 
-> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Sections 5–10 are written in blocks 1.3–1.5.
+> **Status:** Phase 1 in progress — blocks 1.1 (data and EDA) and 1.2 (features and validation) done, with results. Block 1.3 (sections 5–6): method implemented, results pending. Sections 7–10 are written in blocks 1.4–1.5.
 
 ## 1. Dataset
 
@@ -96,11 +96,50 @@ Split strategy: see [D-003 in decisions.md](decisions.md#d-003--split-strategy-b
 
 ## 5. Baselines and model comparison
 
-*Block 1.3.*
+**Protocol.** Every candidate is a complete Pipeline (`industrial_ai.ml.models.build_pipeline`): raw sensor history → `UnitHistoryFeatures` → (scaling) → classifier. All candidates use the **same five unit folds** as the leakage experiment, and `cross_validate_by_unit` (`industrial_ai.ml.selection`) refits a fresh copy of each pipeline per fold and stores an **out-of-fold score** for every training row: each row is scored by a model that never saw its unit. A spy-model test verifies this property. Model inputs go through `model_inputs`, which keeps only unit, cycle and sensors, so the labels can never enter the model.
+
+**Candidates** (from simplest to most complex):
+
+| Candidate | Why it is included |
+|---|---|
+| Logistic regression (with standard scaling) | Linear baseline: if it is close to the others, the problem is mostly linear in the features |
+| Random forest | Robust, few sensitive hyperparameters, captures interactions and non-linearities |
+| Gradient boosting (`HistGradientBoostingClassifier`) | Usually the strongest family on tabular data |
+| XGBoost | Industry-standard gradient boosting; included to check whether it adds anything over scikit-learn's implementation |
+| *Reference:* random forest on the raw sensors of the current cycle | Not a candidate: measures what the engineered features add under the same protocol |
+
+Only logistic regression is scaled: tree models split on thresholds and are insensitive to monotonic rescaling, while a regularised linear model is not.
+
+**Hyperparameters** are fixed, reasonable defaults and are not tuned (D-020). Gradient boosting runs with **early stopping disabled**: scikit-learn would hold out a random 10% of the training rows to decide when to stop, and random rows are exactly the leaky split this project avoids.
+
+**Primary metric: PR-AUC** (average precision), threshold-free and focused on the positive class (section 6).
+
+**Selection rule** (pre-registered, D-015): the simplest candidate whose mean PR-AUC is within one standard deviation of the best candidate's mean (that candidate's standard deviation across folds). A difference smaller than the fold-to-fold noise is not evidence for a more complex model.
+
+**Results.** *To be completed after running notebook 02 (block 1.3).*
 
 ## 6. Metrics and decision-threshold selection
 
-*Block 1.3.*
+**Why not accuracy.** With 15% positive cycles, a model that never predicts failure is 85% accurate in cross-validation (97.5% on the test set) while being useless. Accuracy is reported only to make this point.
+
+**Threshold-free metrics.**
+
+- **PR-AUC** (primary): summarises precision over all recall levels. Its value for a random model equals the prevalence, so it must always be read next to it (0.15 in cross-validation, 0.025 on all test cycles).
+- **ROC-AUC** (secondary): insensitive to class imbalance, which makes it look excellent even when precision is poor; reported for completeness.
+
+**Metrics at the decision threshold** (`industrial_ai.evaluation.metrics.threshold_metrics`): precision, recall, F1, false positive rate, false negative rate and the confusion matrix.
+
+**Which error matters more.** In this scenario a missed warning window (false negative) is assumed to cost more than an unnecessary inspection (false positive), so recall is prioritised. This is a business assumption, not a universal rule: too many false alarms cause *alarm fatigue*, and operators stop trusting the system. With real costs, the threshold would minimise expected cost instead.
+
+**Threshold rule** (pre-registered, D-019): the threshold with the highest precision among those reaching **recall ≥ 0.90**, chosen on the **out-of-fold** scores of the selected model. It is never chosen on training predictions (optimistic) or on the test set (which would turn the test set into a validation set).
+
+**Unit-level view: first alarm.** Row metrics count every cycle separately, but maintenance reacts to the first alarm of a unit. `first_alarms` returns, for each unit, the first cycle at which the score stays above the threshold for `k` consecutive cycles, and its RUL at that moment. On out-of-fold scores every training unit fails, so each first alarm is classified as missed, in window (RUL ≤ H), early (H < RUL ≤ 2H, still useful warning) or premature (RUL > 2H, probably a false alarm). Requiring 3 consecutive cycles filters isolated spikes at the cost of a short delay.
+
+**Label boundary.** A cycle with RUL 31 is labelled negative and one with RUL 30 positive, although the engine is in practically the same state. Many "false positives" are therefore early warnings just outside the horizon, which the first-alarm view and the scatter of test units make visible.
+
+**Final test evaluation.** The selected pipeline is refitted on all 100 training units and evaluated **once** on the test set with the threshold from cross-validation, in two views: every cycle (continuous monitoring) and the last observed cycle per unit (the usual benchmark protocol). Recall should be comparable with cross-validation; precision and PR-AUC are expected to be lower on all test cycles because of the prevalence shift (section 2).
+
+**Results.** *To be completed after running notebook 02 (block 1.3).*
 
 ## 7. Anomaly detection and lead-time evaluation
 
